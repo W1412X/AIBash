@@ -30,7 +30,7 @@ pip install -e .
 ### 使用 pip 安装
 
 ```bash
-pip install aibash
+pip install aibash-wx
 ```
 
 ## 快速开始

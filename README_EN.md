@@ -28,7 +28,7 @@ pip install -e .
 ### Install using pip
 
 ```bash
-pip install aibash
+pip install aibash-wx
 ```
 
 ## Quick Start
