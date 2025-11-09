@@ -1,0 +1,6 @@
+pyyaml>=5.4.1
+requests>=2.25.1
+urllib3>=1.26.0
+pyperclip>=1.9.0; platform_system != "Linux" or extra == "clipboard"
+
+

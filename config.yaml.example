@@ -1,0 +1,190 @@
+# AIBash 配置文件示例
+# 复制此文件到 ~/.aibash/config.yaml 并修改相应配置
+
+# ============================================================================
+# 模型配置
+# ============================================================================
+model:
+  # 提供商: openai 或 ollama
+  provider: openai
+  
+  # API 基础 URL
+  # OpenAI: https://api.openai.com/v1
+  # OpenAI 兼容 API: https://api.openai.com/v1
+  # Ollama: http://localhost:11434
+  # 其他兼容 OpenAI API 的服务: 填写对应的 API 地址
+  api_base: https://api.openai.com/v1
+  
+  # API 密钥（Ollama 可为空）
+  # 注意：请妥善保管您的 API 密钥，不要泄露给他人
+  api_key: your-api-key-here
+  
+  # 模型名称
+  # OpenAI: gpt-3.5-turbo, gpt-4, gpt-4-turbo-preview, 等
+  # Ollama: llama2, mistral, llama3, codellama, 等
+  # 其他服务: 根据服务商提供的模型名称填写
+  model_name: gpt-3.5-turbo
+
+# ============================================================================
+# 模型参数配置
+# ============================================================================
+model_params:
+  # 温度参数 (0.0 - 2.0)，控制输出的随机性
+  # 较低的值使输出更确定性和聚焦，较高的值使输出更随机和创造性
+  # 推荐值: 0.2 - 0.5
+  temperature: 0.3
+  
+  # 最大生成 token 数
+  # 命令通常较短，500 足够，可根据需要调整
+  max_tokens: 500
+  
+  # API 请求超时时间（秒）
+  # 根据网络情况调整，建议 30-60 秒
+  timeout: 30
+
+# ============================================================================
+# 历史记录配置
+# ============================================================================
+history:
+  # 是否启用历史记录
+  enabled: true
+  
+  # 最大记录数
+  # 历史记录会保存在本地文件中，建议根据磁盘空间设置
+  max_records: 50
+  
+  # 是否包含命令输出
+  # true: 保存命令的输出结果，有助于 AI 理解上下文
+  # false: 只保存命令本身，节省空间
+  include_output: true
+  
+  # 历史记录文件路径（留空则自动设置）
+  # 默认: ~/.aibash/history.json
+  history_file: ""
+
+# ============================================================================
+# 用户界面配置
+# ============================================================================
+ui:
+  # 是否启用彩色输出
+  # true: 使用彩色输出，提升可读性
+  # false: 纯文本输出，兼容性更好
+  enable_colors: true
+  
+  # 是否使用单键输入模式
+  # true: 按单个键即可选择（如按 e 执行），无需回车
+  # false: 传统模式，需要输入选项后按回车
+  single_key_mode: true
+
+# ============================================================================
+# 系统信息配置
+# ============================================================================
+# 系统信息（留空则自动检测）
+# 用于帮助 AI 生成更准确的命令
+# 示例: "Linux 5.15.0-139-generic (x86_64)"
+#        "macOS 14.2.1 (Darwin 23.2.0)"
+#        "Windows 10 (10.0.19045)"
+system_info: ""
+
+# ============================================================================
+# Prompt 配置
+# ============================================================================
+# 自定义 prompt（留空则使用默认 prompt）
+# 可以使用以下占位符：
+#   {system_info} - 系统信息
+#   {history_context} - 历史上下文
+#   {user_query} - 用户查询
+custom_prompt: ""
+
+# 是否使用默认 prompt
+# true: 使用内置的默认 prompt
+# false: 使用上面配置的 custom_prompt
+use_default_prompt: true
+
+# ============================================================================
+# 配置示例 - OpenAI
+# ============================================================================
+# model:
+#   provider: openai
+#   api_base: https://api.openai.com/v1
+#   api_key: sk-xxxxxxxxxxxxx
+#   model_name: gpt-3.5-turbo
+# 
+# model_params:
+#   temperature: 0.3
+#   max_tokens: 500
+#   timeout: 30
+#
+# history:
+#   enabled: true
+#   max_records: 50
+#   include_output: true
+#
+# ui:
+#   enable_colors: true
+#   single_key_mode: true
+
+# ============================================================================
+# 配置示例 - Ollama
+# ============================================================================
+# model:
+#   provider: ollama
+#   api_base: http://localhost:11434
+#   api_key: ""  # Ollama 不需要密钥
+#   model_name: llama2
+# 
+# model_params:
+#   temperature: 0.3
+#   max_tokens: 500
+#   timeout: 30
+#
+# history:
+#   enabled: true
+#   max_records: 50
+#   include_output: true
+#
+# ui:
+#   enable_colors: true
+#   single_key_mode: true
+
+# ============================================================================
+# 配置示例 - 自定义 OpenAI 兼容 API
+# ============================================================================
+# model:
+#   provider: openai
+#   api_base: https://your-custom-api.com/v1
+#   api_key: your-api-key
+#   model_name: your-model-name
+# 
+# model_params:
+#   temperature: 0.2
+#   max_tokens: 1000
+#   timeout: 60
+#
+# history:
+#   enabled: true
+#   max_records: 100
+#   include_output: true
+#
+# ui:
+#   enable_colors: true
+#   single_key_mode: true
+
+# ============================================================================
+# 配置示例 - 禁用历史记录
+# ============================================================================
+# history:
+#   enabled: false
+#   max_records: 0
+#   include_output: false
+
+# ============================================================================
+# 配置示例 - 自定义 Prompt
+# ============================================================================
+# custom_prompt: |
+#   你是一个专业的命令行助手。
+#   系统: {system_info}
+#   {history_context}
+#   用户需求: {user_query}
+#   请生成对应的shell命令：
+# use_default_prompt: false
