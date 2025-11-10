@@ -91,10 +91,13 @@ aibash --config /path/to/config.yaml -l "查找包含test的文件"
 aibash -a "查看当前项目依赖并生成 requirements.txt"
 
 # 自动模式从文件读取任务描述
-aibash -a @/path/to/task_description.txt
+aibash -p /path/to/task_description.txt
 
 # 在新的终端窗口中执行命令
 aibash -new -l "运行当前目录下的测试用例"
+
+# 项目分析模式（生成项目摘要后再执行）
+aibash --analyze "梳理项目模块并输出重构建议"
 
 # 查看帮助
 aibash -h
@@ -112,16 +115,15 @@ aibash --clear-history
 aibash --test
 ```
 
-## 命令行选项
-
 - `-l, --lang QUERY`: 自然语言描述，用于生成 shell 命令
-- `-a, --auto QUERY`: 自动模式，根据自然语言目标规划并执行多步操作，每一步执行前都会请求确认
+- `-a, --auto QUERY`: 自动模式，根据自然语言目标规划并执行多步操作（默认最多 30 步，不生成项目摘要）
+- `--analyze QUERY`: 项目分析模式，在执行步骤前自动生成项目摘要，适合大型工程
 - `-p, --plan-file PATH`: 指定文件作为自动模式的任务描述输入
 - `--auto-approve-all`: 自动模式下自动批准所有动作（无确认）
 - `--auto-approve-commands`: 自动模式下自动批准命令执行
 - `--auto-approve-files`: 自动模式下自动批准文件读取
 - `--auto-approve-web`: 自动模式下自动批准网络请求
-- `--auto-max-steps N`: 自动模式下限制最多执行的步骤数量（默认 20）
+- `--auto-max-steps N`: 自动模式下限制最多执行的步骤数量（默认 30）
 - `--ui-language {en,zh}`: 临时切换界面语言（默认从配置读取，未设置时为英文）
 - `--config PATH`: 指定配置文件路径（默认: ~/.aibash/config.yaml）
 - `-new, --new-terminal`: 将命令在新的终端窗口中执行（未指定时默认在当前终端执行）
@@ -144,7 +146,7 @@ aibash --test
 
 ### 自动模式（-a）
 
-自动模式会让 AIBash 充当一个“执行代理”，根据你的自然语言描述分步规划并完成任务：
+自动模式让 AIBash 充当一个“执行代理”，根据你的自然语言描述分步规划并完成任务：
 
 - 模型每次只会规划一个动作（运行命令、读取文件、访问网络、向你提问或结束）
 - 每个命令、文件读取或网络访问都会先询问你是否确认执行
@@ -152,7 +154,9 @@ aibash --test
 - 适合需要多步协作的任务，如“拉取最新代码、安装依赖并运行测试”等
 - 可使用 `--auto-approve-*` 参数细粒度控制哪些操作无需确认，并可通过 `--auto-max-steps` 限制最多执行的步骤数
 - 如某一步执行失败，自动模式会向模型反馈错误详情，并自动重新规划新的命令或策略
-- 自动模式支持从配置文件预设是否自动确认命令/读文件/访问网络等行为
+- 自动模式默认不会生成项目摘要，专注于执行用户任务；如需对项目结构进行深入分析，请使用 `--analyze`
+- 项目分析模式会先对目录下的关键文件进行摘要（支持缓存与并发），帮助模型快速理解项目结构，再继续执行计划；摘要缓存保存在项目下 `.aibash_cache/summary_cache.json`
+- 自动模式和项目分析模式均支持从配置文件预设是否自动确认命令/读文件/访问网络，以及是否静默展示读取/目录类输出（`automation.allow_silence`，默认开启）
 
 可以与 `-new` 搭配，在新的终端窗口中执行实际命令，确保自动模式界面保持整洁。
 
@@ -178,7 +182,7 @@ aibash --test
 - `custom_prompt`: 自定义 prompt 模板
 - `use_default_prompt`: 是否使用默认 prompt
 - `ui.language`: 界面语言（`en` 或 `zh`，默认 `en`）
-- `automation`: 自动模式默认行为配置
+- `automation`: 自动模式默认行为配置（如自动确认、最大步骤、项目摘要并发等）
 
 ```yaml
 automation:
@@ -186,7 +190,10 @@ automation:
   auto_confirm_commands: false
   auto_confirm_files: false
   auto_confirm_web: false
-  max_steps: 20
+  max_steps: 30
+  allow_silence: true
+  enable_auto_summary: false
+  summary_workers: 4
 
 ui:
   enable_colors: true

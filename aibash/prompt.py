@@ -5,6 +5,7 @@ Prompt 管理模块
 """
 
 from typing import List, Dict, Any
+from pathlib import Path
 from importlib.resources import files
 
 
@@ -30,9 +31,14 @@ class PromptManager:
 3. 确保命令的安全性，避免危险的命令（如删除重要文件、格式化磁盘等）
 4. 如果用户的需求不明确，生成最常用和安全的命令
 5. 优先使用跨平台兼容的命令（如使用python而不是bash特定语法）
+6. 针对复杂任务，优先考虑通过组合命令、编写临时脚本或调用分析工具获取关键信息
+7. 当处理大型文件或目录时，可以拆分读取、生成摘要后再继续操作
 
 系统信息：
 {system_info}
+
+上下文摘要：
+{environment_context}
 
 {history_context}
 
@@ -89,7 +95,8 @@ Tip: <one-sentence hint>
         user_query: str,
         system_info: str = "",
         history_context: str = "",
-        custom_prompt: str = ""
+        custom_prompt: str = "",
+        environment_context: str = ""
     ) -> str:
         """
         格式化 prompt
@@ -111,7 +118,43 @@ Tip: <one-sentence hint>
         return template.format(
             system_info=system_info or "未知系统",
             history_context=history_context or "",
-            user_query=user_query
+            user_query=user_query,
+            environment_context=environment_context or "（无额外上下文）"
+        )
+
+    SUMMARY_PROMPT_TEMPLATE = """你是项目助手，请阅读以下文件片段并生成摘要，关注关键功能、依赖、接口以及对其他文件的引用关系。
+
+文件路径：{file_path}
+片段编号：{chunk_info}
+
+内容：
+```
+{content}
+```
+
+请输出简洁摘要，必要时列出要点。"""
+
+    SUMMARY_AGGREGATION_TEMPLATE = """你已经阅读完文件的多个片段，以下是各片段的摘要：
+
+{chunk_summaries}
+
+请根据上述信息输出该文件的整体摘要，突出关键用途、主要函数/类、配置项以及潜在注意事项。"""
+
+    @staticmethod
+    def format_summary_prompt(file_path: Path, content: str, chunk_index: int = 1, chunk_total: int = 1) -> str:
+        chunk_info = f"{chunk_index}/{chunk_total}"
+        return PromptManager.SUMMARY_PROMPT_TEMPLATE.format(
+            file_path=file_path,
+            chunk_info=chunk_info,
+            content=content
+        )
+
+    @staticmethod
+    def format_summary_aggregation(file_path: Path, chunk_summaries: List[str]) -> str:
+        bullet_points = "\n".join(f"- {summary}" for summary in chunk_summaries)
+        return PromptManager.SUMMARY_AGGREGATION_TEMPLATE.format(
+            file_path=file_path,
+            chunk_summaries=bullet_points
         )
     
     @staticmethod
@@ -155,18 +198,15 @@ Tip: <one-sentence hint>
         if not history_records:
             return ""
         
-        context_lines = ["\n最近的命令执行历史："]
-        for i, record in enumerate(history_records[-10:], 1):  # 只取最近10条
-            cmd = record.get('command', '')
-            output = record.get('output', '')
-            success = record.get('success', True)
-            
-            context_lines.append(f"\n{i}. 命令: {cmd}")
-            if output:
-                # 截断过长的输出
-                output_preview = output[:200] + "..." if len(output) > 200 else output
-                context_lines.append(f"   输出: {output_preview}")
-            context_lines.append(f"   状态: {'成功' if success else '失败'}")
+        context_lines = ["\n最近命令摘要："]
+        recent_records = history_records[-20:]  # 摘要可携带更多条目
+        for idx, record in enumerate(recent_records, 1):
+            summary = record.get('summary')
+            if not summary:
+                cmd = record.get('command', '')
+                success = record.get('success', True)
+                summary = ("✓" if success else "✗") + " " + cmd
+            context_lines.append(f"{idx}. {summary}")
         
         return "\n".join(context_lines)
 

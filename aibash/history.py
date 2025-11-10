@@ -58,7 +58,8 @@ class HistoryManager:
                 'user_query': user_query,
                 'command': command,
                 'output': output,
-                'success': success
+                'success': success,
+                'summary': self._summarize_record(command, output, success)
             }
             
             records.append(record)
@@ -85,7 +86,15 @@ class HistoryManager:
         try:
             with open(self.history_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                return data.get('records', [])
+                records = data.get('records', [])
+                for record in records:
+                    if 'summary' not in record:
+                        record['summary'] = self._summarize_record(
+                            record.get('command', ''),
+                            record.get('output', ''),
+                            record.get('success', True)
+                        )
+                return records
         except Exception:
             return []
     
@@ -93,7 +102,7 @@ class HistoryManager:
         """保存历史记录"""
         try:
             data = {
-                'version': '1.0',
+                'version': '1.1',
                 'records': records
             }
             with open(self.history_file, 'w', encoding='utf-8') as f:
@@ -121,4 +130,23 @@ class HistoryManager:
         """
         records = self.load_records()
         return records[-count:] if len(records) > count else records
+
+    @staticmethod
+    def _summarize_record(command: str, output: str, success: bool) -> str:
+        """生成简洁摘要，便于在 Prompt 中携带更多历史信息"""
+        status = "✓" if success else "✗"
+        command_clean = command.strip().replace("\n", " ")
+        command_preview = command_clean[:80] + ("..." if len(command_clean) > 80 else "")
+        output_line = ""
+        if output:
+            for line in output.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    output_line = stripped
+                    break
+        if output_line:
+            if len(output_line) > 80:
+                output_line = output_line[:80] + "..."
+            return f"{status} {command_preview} -> {output_line}"
+        return f"{status} {command_preview}"
 

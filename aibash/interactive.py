@@ -20,6 +20,10 @@ from .i18n import t
 class InteractiveSelector:
     """交互式选择器"""
     
+    MAX_OUTPUT_CHARS = 8000
+    OUTPUT_HEAD_CHARS = 4000
+    OUTPUT_TAIL_CHARS = 2000
+    
     OPTIONS = {
         'e': ('execute', 'interactive_option_execute'),
         'c': ('copy', 'interactive_option_copy'),
@@ -144,9 +148,9 @@ class InteractiveSelector:
             
             # 输出 stdout 和 stderr
             if result.stdout:
-                print(result.stdout)
+                self._print_stream(result.stdout, is_stderr=False)
             if result.stderr:
-                print(result.stderr, file=sys.stderr)
+                self._print_stream(result.stderr, is_stderr=True)
             
             success = result.returncode == 0
             output = (result.stdout + result.stderr).strip()
@@ -265,3 +269,19 @@ class InteractiveSelector:
             content=content,
             color=Colors.BRIGHT_BLUE
         )
+
+    def _print_stream(self, text: str, is_stderr: bool = False):
+        """限制大输出，避免刷屏"""
+        if len(text) <= self.MAX_OUTPUT_CHARS:
+            print(text, file=sys.stderr if is_stderr else sys.stdout, end="")
+            if text and not text.endswith("\n"):
+                print(file=sys.stderr if is_stderr else sys.stdout)
+            return
+        head = text[:self.OUTPUT_HEAD_CHARS]
+        tail = text[-self.OUTPUT_TAIL_CHARS:]
+        stream = sys.stderr if is_stderr else sys.stdout
+        print(head, file=stream, end="")
+        if not head.endswith("\n"):
+            print(file=stream)
+        print("... [output truncated] ...", file=stream)
+        print(tail, file=stream, end="" if tail.endswith("\n") else "\n", flush=True)

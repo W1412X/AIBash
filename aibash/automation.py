@@ -46,6 +46,9 @@ AUTOMATION_PROMPT_TEMPLATE = """你是终端自动化助手，任务是根据用
 系统信息：
 {system_info}
 
+附加上下文摘要：
+{environment_context}
+
 当前工作目录：
 {cwd}
 
@@ -54,6 +57,12 @@ AUTOMATION_PROMPT_TEMPLATE = """你是终端自动化助手，任务是根据用
 
 历史记录（仅供参考）：
 {history}
+
+提示：
+- 优先先勘察目录结构、依赖和关键文件，可以使用 shell 管道、Python 脚本或其他工具生成摘要后再继续任务。
+- 当需要分析复杂文件或大输出时，分块处理或编写脚本辅助处理。
+- 充分利用环境信息来定位项目结构、虚拟环境和 Git 状态。
+- 尽量复用已有工具链；必要时可以临时编写小脚本（如 python - <<'PY' ... PY）完成分析。
 
 请输出符合要求的 JSON。
 """
@@ -85,7 +94,8 @@ class AutomationExecutor:
         interactive: InteractiveSelector,
         config: AppConfig,
         use_new_terminal: bool = False,
-        auto_options: Optional[Dict[str, Any]] = None
+        auto_options: Optional[Dict[str, Any]] = None,
+        environment_context: str = ""
     ):
         self.agent = agent
         self.terminal = terminal
@@ -99,7 +109,9 @@ class AutomationExecutor:
         self.auto_confirm_files = bool(self.auto_options.get('auto_confirm_files'))
         self.auto_confirm_web = bool(self.auto_options.get('auto_confirm_web'))
         self.max_steps = int(self.auto_options.get('max_steps') or self.MAX_STEPS)
+        self.environment_context = environment_context
         self.steps: List[AutomationStep] = []
+        self.silent_mode = bool(self.auto_options.get('allow_silence', True))
     
     def run(self, task: str):
         """执行自动化任务"""
@@ -150,7 +162,8 @@ class AutomationExecutor:
             system_info=system_info,
             cwd=cwd,
             task=task,
-            history=history_text
+            history=history_text,
+            environment_context=self.environment_context or "（无额外上下文）"
         )
     
     def _format_history_for_prompt(self) -> str:
@@ -274,7 +287,8 @@ class AutomationExecutor:
             return False
         
         target_path = Path(path_value).expanduser().resolve()
-        self.terminal.info(t("automation_file_request", path=target_path))
+        if not self.silent_mode:
+            self.terminal.info(t("automation_file_request", path=target_path))
         
         if not self._confirm_with_user(t("automation_confirm_read_file"), action="read_file"):
             observation = t("automation_file_denied")
@@ -289,14 +303,14 @@ class AutomationExecutor:
             return True
         
         try:
-            content = target_path.read_text(encoding="utf-8")
-            preview = self._truncate(content, self.MAX_OBSERVATION_LENGTH)
-            self.terminal.print_box(
-                title=t("automation_file_preview_title"),
-                content=preview,
-                color=Colors.BRIGHT_GREEN
-            )
-            self._record_step("read_file", "success", reason, preview)
+            preview, meta = self._generate_file_preview(target_path)
+            self._record_step("read_file", "success", reason, f"{meta}\n{self._truncate(preview, 400)}")
+            if not self.silent_mode:
+                self.terminal.print_box(
+                    title=t("automation_file_preview_title"),
+                    content=f"{meta}\n\n{preview}",
+                    color=Colors.BRIGHT_GREEN
+                )
             return True
         except UnicodeDecodeError:
             observation = t("automation_file_binary")
@@ -318,9 +332,10 @@ class AutomationExecutor:
             self.terminal.error("✗ " + t("automation_missing_url"))
             return False
         
-        self.terminal.info(t("automation_web_request", url=url))
-        if expectation:
-            self.terminal.dim(t("automation_web_expectation", expectation=expectation))
+        if not self.silent_mode:
+            self.terminal.info(t("automation_web_request", url=url))
+            if expectation:
+                self.terminal.dim(t("automation_web_expectation", expectation=expectation))
         
         if not url.lower().startswith(("http://", "https://")):
             observation = t("automation_web_protocol")
@@ -428,12 +443,57 @@ class AutomationExecutor:
             note = "\n" + t("automation_ssl_unverified_note")
         observation = f"{status_line}; Content-Type={content_type}; Preview:\n{preview}{note}"
         self._record_step("web_request", "success", reason, observation)
-        self.terminal.print_box(
-            title="Web Response Preview",
-            content=preview,
-            color=Colors.BRIGHT_GREEN
-        )
-        if note:
-            self.terminal.warning(t("automation_ssl_unverified_note"))
+        if not self.silent_mode:
+            self.terminal.print_box(
+                title="Web Response Preview",
+                content=preview,
+                color=Colors.BRIGHT_GREEN
+            )
+            if note:
+                self.terminal.warning(t("automation_ssl_unverified_note"))
         return True
+
+    def _generate_file_preview(self, path: Path) -> tuple[str, str]:
+        """生成文件预览（支持大文件分段读取）"""
+        max_preview_bytes = 4000
+        size_bytes = path.stat().st_size
+        encoding = "utf-8"
+        head_text = ""
+        tail_text = ""
+        truncated = False
+
+        with path.open('rb') as f:
+            data = f.read(max_preview_bytes)
+            head_text = data.decode(encoding, errors='replace')
+            if size_bytes > max_preview_bytes * 2:
+                truncated = True
+                f.seek(-max_preview_bytes, 2)
+                tail = f.read(max_preview_bytes)
+                tail_text = tail.decode(encoding, errors='replace')
+            elif size_bytes > max_preview_bytes:
+                truncated = True
+                tail_text = ""
+
+        preview_parts = [head_text.rstrip()]
+        if tail_text:
+            preview_parts.append("\n... [middle omitted] ...\n")
+            preview_parts.append(tail_text.lstrip())
+        preview = "".join(preview_parts)
+
+        head_lines = head_text.count("\n")
+        tail_lines = tail_text.count("\n") if tail_text else 0
+        if not truncated:
+            approx_lines = head_lines + (1 if head_text and not head_text.endswith("\n") else 0)
+        else:
+            approx_lines = f">= {head_lines + tail_lines}"
+
+        meta = f"Path: {path}\nSize: {size_bytes} bytes\nLines (approx): {approx_lines}"
+        if truncated:
+            meta += "\nPreview: head and tail segments shown (content truncated)"
+        else:
+            meta += "\nPreview: full content"
+        return preview, meta
+
+    def enable_silent_outputs(self, silent: bool = True):
+        self.silent_mode = silent
 

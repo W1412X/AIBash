@@ -37,7 +37,10 @@ class AutomationConfig:
     auto_confirm_commands: bool = False
     auto_confirm_files: bool = False
     auto_confirm_web: bool = False
-    max_steps: int = 20
+    max_steps: int = 30
+    allow_silence: bool = True
+    enable_auto_summary: bool = False
+    summary_workers: int = 4
 
 
 @dataclass
@@ -116,7 +119,10 @@ class ConfigManager:
                 auto_confirm_commands=automation_data.get('auto_confirm_commands', False),
                 auto_confirm_files=automation_data.get('auto_confirm_files', False),
                 auto_confirm_web=automation_data.get('auto_confirm_web', False),
-                max_steps=automation_data.get('max_steps', 20),
+                max_steps=automation_data.get('max_steps', 30),
+                allow_silence=automation_data.get('allow_silence', True),
+                enable_auto_summary=automation_data.get('enable_auto_summary', False),
+                summary_workers=automation_data.get('summary_workers', 4),
             )
             
             # 获取系统信息
@@ -163,7 +169,9 @@ class ConfigManager:
             )
         else:
             if self.config.automation.max_steps <= 0:
-                self.config.automation.max_steps = 20
+                self.config.automation.max_steps = 30
+            if self.config.automation.summary_workers <= 0:
+                self.config.automation.summary_workers = 4
     
     def _get_default_system_info(self) -> str:
         """获取默认系统信息"""

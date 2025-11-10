@@ -405,6 +405,16 @@ history:
   max_records: 100
   include_output: true
 
+automation:
+  auto_confirm_all: false
+  auto_confirm_commands: false
+  auto_confirm_files: false
+  auto_confirm_web: false
+  max_steps: 30
+  allow_silence: true
+  enable_auto_summary: false
+  summary_workers: 4
+
 ui:
   enable_colors: true
   single_key_mode: true
@@ -432,6 +442,16 @@ history:
   max_records: 50
   include_output: true
 
+automation:
+  auto_confirm_all: false
+  auto_confirm_commands: true
+  auto_confirm_files: false
+  auto_confirm_web: false
+  max_steps: 30
+  allow_silence: true
+  enable_auto_summary: true
+  summary_workers: 6
+
 ui:
   enable_colors: true
   single_key_mode: true
@@ -458,6 +478,16 @@ history:
   enabled: false  # 不保存历史记录
   max_records: 0
   include_output: false
+
+automation:
+  auto_confirm_all: false
+  auto_confirm_commands: false
+  auto_confirm_files: false
+  auto_confirm_web: false
+  max_steps: 30
+  allow_silence: true
+  enable_auto_summary: false
+  summary_workers: 2
 
 ui:
   enable_colors: true

@@ -6,9 +6,12 @@ AIBash 主程序入口
 
 import sys
 import argparse
+import math
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from .config import ConfigManager
 from .agents.agent_builder import AgentBuilder
@@ -19,10 +22,22 @@ from .utils.terminal import TerminalOutput, Colors
 from . import config_init
 from .automation import AutomationExecutor
 from .i18n import I18n, t
+from .context import ContextCollector
+from .summary_cache import ProjectSummaryCache
 
 
 class AIBash:
     """AIBash 主类"""
+    
+    SUMMARY_ALLOWED_SUFFIXES = {
+        ".py", ".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".toml", ".ini",
+        ".cfg", ".conf", ".sh", ".bash", ".zsh", ".js", ".ts", ".tsx", ".jsx",
+        ".java", ".kt", ".swift", ".go", ".rs", ".c", ".cc", ".cpp", ".h", ".hpp",
+        ".cs", ".php", ".rb", ".scala"
+    }
+    SUMMARY_MAX_FILES = 200
+    SUMMARY_CONTEXT_FILES = 12
+    SUMMARY_CHUNK_SIZE = 4000
     
     def __init__(self, config_path: Optional[str] = None):
         """
@@ -36,15 +51,17 @@ class AIBash:
         self.language = self.config.ui.get('language', 'en')
         I18n.set_language(self.language)
         
-        # 初始化历史记录管理器
+        # 初始化终端输出与历史记录管理器
+        self.terminal = TerminalOutput(enable_colors=self.config.ui.get('enable_colors', True))
         self.history_manager = HistoryManager(
             history_file=self.config.history.history_file,
             max_records=self.config.history.max_records,
             enabled=self.config.history.enabled
         )
         
-        # 初始化终端输出
-        self.terminal = TerminalOutput(enable_colors=self.config.ui.get('enable_colors', True))
+        # 环境上下文及摘要
+        self.summary_workers = max(1, self.config.automation.summary_workers)
+        self.environment_context = self._build_environment_context()
         
         # 初始化交互式选择器
         self.interactive = InteractiveSelector(
@@ -67,6 +84,86 @@ class AIBash:
         except Exception as e:
             self.terminal.warning(t("warn_language_persist_failed", error=e))
     
+    def _gather_summary_files(self, path: Path, limit: int | None = None) -> List[Path]:
+        files: List[Path] = []
+        if path.is_file():
+            if self._is_text_file(path):
+                files.append(path)
+            return files
+        max_files = limit or self.SUMMARY_MAX_FILES
+        for file_path in path.rglob("*"):
+            if len(files) >= max_files:
+                break
+            if not file_path.is_file():
+                continue
+            if "__pycache__" in file_path.parts:
+                continue
+            if not self._is_text_file(file_path):
+                continue
+            files.append(file_path)
+        return files
+    
+    def _is_text_file(self, path: Path) -> bool:
+        suffix = path.suffix.lower()
+        if suffix and suffix not in self.SUMMARY_ALLOWED_SUFFIXES:
+            # 允许未知后缀但需进一步检测
+            pass
+        try:
+            with path.open('rb') as f:
+                sample = f.read(1024)
+                if b'\0' in sample:
+                    return False
+        except Exception:
+            return False
+        return True
+    
+    def _summarize_file(self, file_path: Path, agent) -> Optional[str]:
+        try:
+            text = file_path.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            try:
+                text = file_path.read_text(encoding='utf-8', errors='ignore')
+            except Exception:
+                self.terminal.warning(t("error_summarize_not_text", path=file_path))
+                return None
+        except Exception:
+            self.terminal.warning(t("error_summarize_not_text", path=file_path))
+            return None
+        
+        text = text.strip()
+        if not text:
+            return "（文件为空）"
+        
+        if len(text) <= self.SUMMARY_CHUNK_SIZE:
+            prompt = PromptManager.format_summary_prompt(file_path, text, 1, 1)
+            try:
+                summary = agent.generate_command(prompt, expect_raw=True)
+            except Exception as exc:
+                self.terminal.error(t("error_generate_command", error=exc))
+                return None
+            return summary.strip()
+        
+        chunk_summaries: List[str] = []
+        total_chunks = math.ceil(len(text) / self.SUMMARY_CHUNK_SIZE)
+        for idx in range(total_chunks):
+            start = idx * self.SUMMARY_CHUNK_SIZE
+            chunk = text[start:start + self.SUMMARY_CHUNK_SIZE]
+            prompt = PromptManager.format_summary_prompt(file_path, chunk, idx + 1, total_chunks)
+            try:
+                chunk_summary = agent.generate_command(prompt, expect_raw=True).strip()
+            except Exception as exc:
+                self.terminal.error(t("error_generate_command", error=exc))
+                return None
+            chunk_summaries.append(chunk_summary)
+        
+        aggregate_prompt = PromptManager.format_summary_aggregation(file_path, chunk_summaries)
+        try:
+            final_summary = agent.generate_command(aggregate_prompt, expect_raw=True)
+        except Exception as exc:
+            self.terminal.error(t("error_generate_command", error=exc))
+            return None
+        return final_summary.strip()
+    
     def _init_agent(self):
         """初始化 AI Agent"""
         model_config = self.config.model
@@ -75,14 +172,114 @@ class AIBash:
             return
         
         try:
-            self.agent = AgentBuilder.build_agent(
-                model_config,
-                temperature=self.config.model_params.get('temperature', 0.3),
-                max_tokens=self.config.model_params.get('max_tokens', 500),
-                timeout=self.config.model_params.get('timeout', 30)
-            )
+            self.agent = self._build_agent_instance()
         except Exception as e:
             self.terminal.error(t("error_agent_init_failed", error=e))
+    
+    def _build_agent_instance(self):
+        return AgentBuilder.build_agent(
+            self.config.model,
+            temperature=self.config.model_params.get('temperature', 0.3),
+            max_tokens=self.config.model_params.get('max_tokens', 500),
+            timeout=self.config.model_params.get('timeout', 30)
+        )
+
+    def _build_environment_context(self) -> str:
+        try:
+            base = ContextCollector(Path.cwd()).collect()
+        except Exception:
+            base = ""
+        return base
+
+    def _generate_project_summary(self, root: Path, workers: int) -> str:
+        files = self._gather_summary_files(root, limit=self.SUMMARY_CONTEXT_FILES)
+        if not files:
+            return ""
+        
+        cache = ProjectSummaryCache(root)
+        cache.load()
+        thread_local = threading.local()
+        summaries: List[tuple[Path, str]] = []
+        to_process: List[tuple[Path, float]] = []
+        
+        for file_path in files:
+            mtime = file_path.stat().st_mtime
+            cached_summary = cache.get_summary(file_path, mtime)
+            if cached_summary:
+                relative = file_path.relative_to(root) if file_path.is_absolute() else file_path
+                self.terminal.dim(t("info_summary_cache_used", path=relative))
+                summaries.append((relative, cached_summary))
+            else:
+                to_process.append((file_path, mtime))
+        
+        if to_process:
+            workers = min(workers, len(to_process))
+            self.terminal.dim(t("info_summarize_start", path=root, count=len(to_process)))
+
+            def worker(item):
+                file_path, mtime = item
+                if not hasattr(thread_local, "agent"):
+                    try:
+                        thread_local.agent = self._build_agent_instance()
+                    except Exception as exc:
+                        return file_path, mtime, None, exc
+                agent = thread_local.agent
+                summary = self._summarize_file(file_path, agent)
+                return file_path, mtime, summary, None
+
+            with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+                futures = [executor.submit(worker, item) for item in to_process]
+                for future in as_completed(futures):
+                    file_path, mtime, summary, error = future.result()
+                    if error:
+                        self.terminal.error(t("error_generate_command", error=error))
+                        continue
+                    if not summary:
+                        continue
+                    cache.update_summary(file_path, mtime, summary)
+                    relative = file_path.relative_to(root) if file_path.is_absolute() else file_path
+                    summaries.append((relative, summary))
+            cache.save()
+            self.terminal.dim(t("info_summary_cache_saved", count=len(to_process)))
+        
+        self.terminal.dim(t("info_summarize_done"))
+        
+        summaries.sort(key=lambda item: str(item[0]))
+        return "\n".join(f"- {path}: {self._truncate_summary(summary)}" for path, summary in summaries)
+
+    @staticmethod
+    def _truncate_summary(summary: str, limit: int = 220) -> str:
+        summary = " ".join(summary.split())
+        if len(summary) <= limit:
+            return summary
+        return summary[:limit] + "..."
+    
+    def run_project_analysis(
+        self,
+        user_query: str,
+        use_new_terminal: bool = False,
+        auto_options: Optional[dict] = None
+    ):
+        """项目分析模式：生成项目摘要后执行自动模式"""
+        if not self.agent:
+            self.terminal.error(t("error_agent_not_initialized"))
+            return
+        
+        options = auto_options or {}
+        options.setdefault('summary_workers', self.summary_workers)
+        base_env = self.environment_context or self._build_environment_context()
+        summary_text = self._generate_project_summary(Path.cwd(), options.get('summary_workers', self.summary_workers))
+        environment_context = base_env
+        if summary_text:
+            environment_context = (environment_context + f"\n\n【Project Summary】\n{summary_text}").strip()
+        
+        options['enable_auto_summary'] = False
+        self.process_auto_task(
+            user_query=user_query,
+            use_new_terminal=use_new_terminal,
+            auto_options=options,
+            environment_override=environment_context
+        )
     
     def generate_command(self, user_query: str) -> Optional[str]:
         """
@@ -109,7 +306,8 @@ class AIBash:
             user_query=user_query,
             system_info=self.config.system_info,
             history_context=history_context,
-            custom_prompt=self.config.custom_prompt if not self.config.use_default_prompt else ""
+            custom_prompt=self.config.custom_prompt if not self.config.use_default_prompt else "",
+            environment_context=self.environment_context
         )
         
         try:
@@ -203,7 +401,13 @@ class AIBash:
                 # 如果无法恢复或命令未变化，则结束
                 return
 
-    def process_auto_task(self, user_query: str, use_new_terminal: bool = False, auto_options: Optional[dict] = None):
+    def process_auto_task(
+        self,
+        user_query: str,
+        use_new_terminal: bool = False,
+        auto_options: Optional[dict] = None,
+        environment_override: Optional[str] = None
+    ):
         """
         处理自动化任务
         
@@ -221,6 +425,17 @@ class AIBash:
         for key, value in auto_options.items():
             if value is not None:
                 merged_options[key] = value
+
+        if environment_override is not None:
+            environment_context = environment_override
+            merged_options['enable_auto_summary'] = False
+        else:
+            environment_context = self.environment_context or self._build_environment_context()
+            if merged_options.get('enable_auto_summary', False):
+                summary_workers = max(1, merged_options.get('summary_workers', self.summary_workers))
+                project_summary = self._generate_project_summary(Path.cwd(), summary_workers)
+                if project_summary:
+                    environment_context = (environment_context + f"\n\n【Project Summary】\n{project_summary}").strip()
         
         executor = AutomationExecutor(
             agent=self.agent,
@@ -229,8 +444,12 @@ class AIBash:
             interactive=self.interactive,
             config=self.config,
             use_new_terminal=use_new_terminal,
-            auto_options=merged_options
+            auto_options=merged_options,
+            environment_context=environment_context
         )
+
+        executor.enable_silent_outputs(merged_options.get('allow_silence', True))
+
         executor.run(user_query)
 
     def _attempt_command_recovery(self, user_query: str, failed_command: str, error_output: str) -> Optional[dict]:
@@ -317,6 +536,13 @@ def create_parser() -> argparse.ArgumentParser:
         metavar='QUERY',
         help=t("help_auto_option")
     )
+
+    query_group.add_argument(
+        '-A', '--analyze',
+        dest='analyze_query',
+        metavar='QUERY',
+        help=t("help_analyze_option")
+    )
     
     parser.add_argument(
         '--config',
@@ -372,6 +598,7 @@ def create_parser() -> argparse.ArgumentParser:
         metavar='PATH',
         help=t("help_plan_file")
     )
+
     
     parser.add_argument(
         '--ui-language',
@@ -490,7 +717,7 @@ def main():
         return
     
     # 如果没有提供查询，显示帮助
-    if not args.query and not args.auto_query and not args.plan_file:
+    if not args.query and not args.auto_query and not args.plan_file and not args.analyze_query:
         parser.print_help()
         return
     
@@ -500,7 +727,31 @@ def main():
         aibash.terminal.info(t("info_run_init_or_check"))
         sys.exit(1)
     
+    def collect_auto_options():
+        auto_options = {}
+        if args.auto_approve_all:
+            auto_options['auto_confirm_all'] = True
+        if args.auto_approve_commands:
+            auto_options['auto_confirm_commands'] = True
+        if args.auto_approve_files:
+            auto_options['auto_confirm_files'] = True
+        if args.auto_approve_web:
+            auto_options['auto_confirm_web'] = True
+        if args.auto_max_steps is not None:
+            auto_options['max_steps'] = args.auto_max_steps
+        return auto_options
+    
     try:
+        if args.analyze_query:
+            auto_options = collect_auto_options()
+            auto_options.setdefault('summary_workers', aibash.summary_workers)
+            aibash.run_project_analysis(
+                args.analyze_query,
+                use_new_terminal=args.new_terminal,
+                auto_options=auto_options
+            )
+            return
+        
         if args.auto_query or args.plan_file:
             auto_query_text = args.auto_query or ""
             if args.plan_file:
@@ -517,17 +768,7 @@ def main():
             if not auto_query_text:
                 aibash.terminal.error(t("error_auto_missing_query"))
                 sys.exit(1)
-            auto_options = {}
-            if args.auto_approve_all:
-                auto_options['auto_confirm_all'] = True
-            if args.auto_approve_commands:
-                auto_options['auto_confirm_commands'] = True
-            if args.auto_approve_files:
-                auto_options['auto_confirm_files'] = True
-            if args.auto_approve_web:
-                auto_options['auto_confirm_web'] = True
-            if args.auto_max_steps is not None:
-                auto_options['max_steps'] = args.auto_max_steps
+            auto_options = collect_auto_options()
             aibash.process_auto_task(
                 auto_query_text,
                 use_new_terminal=args.new_terminal,
