@@ -90,6 +90,9 @@ aibash --config /path/to/config.yaml -l "查找包含test的文件"
 # 自动模式示例（逐步完成任务并逐条确认）
 aibash -a "查看当前项目依赖并生成 requirements.txt"
 
+# 自动模式从文件读取任务描述
+aibash -a @/path/to/task_description.txt
+
 # 在新的终端窗口中执行命令
 aibash -new -l "运行当前目录下的测试用例"
 
@@ -113,6 +116,7 @@ aibash --test
 
 - `-l, --lang QUERY`: 自然语言描述，用于生成 shell 命令
 - `-a, --auto QUERY`: 自动模式，根据自然语言目标规划并执行多步操作，每一步执行前都会请求确认
+- `-p, --plan-file PATH`: 指定文件作为自动模式的任务描述输入
 - `--auto-approve-all`: 自动模式下自动批准所有动作（无确认）
 - `--auto-approve-commands`: 自动模式下自动批准命令执行
 - `--auto-approve-files`: 自动模式下自动批准文件读取

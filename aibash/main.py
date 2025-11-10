@@ -7,6 +7,7 @@ AIBash 主程序入口
 import sys
 import argparse
 from dataclasses import asdict
+from pathlib import Path
 from typing import Optional
 
 from .config import ConfigManager
@@ -61,6 +62,10 @@ class AIBash:
         I18n.set_language(language)
         self.language = I18n.get_language()
         self.config.ui['language'] = self.language
+        try:
+            self.config_manager.save_config()
+        except Exception as e:
+            self.terminal.warning(t("warn_language_persist_failed", error=e))
     
     def _init_agent(self):
         """初始化 AI Agent"""
@@ -291,16 +296,10 @@ def create_parser() -> argparse.ArgumentParser:
     """创建命令行参数解析器"""
     parser = argparse.ArgumentParser(
         prog='aibash',
-        description='AI-powered shell command generator',
+        description=t("parser_description"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  aibash -l "list all files in current directory"
-  aibash -l "find files containing test"
-  aibash --config /path/to/config.yaml -l "perform some operation"
-
-For more information, visit: https://github.com/W1412X/aibash
-        """
+        epilog=t("parser_epilog"),
+        usage=t("parser_usage", prog='aibash')
     )
     
     query_group = parser.add_mutually_exclusive_group()
@@ -309,99 +308,107 @@ For more information, visit: https://github.com/W1412X/aibash
         '-l', '--lang',
         dest='query',
         metavar='QUERY',
-        help='Natural language description to generate a single shell command'
+        help=t("help_lang_option")
     )
     
     query_group.add_argument(
         '-a', '--auto',
         dest='auto_query',
         metavar='QUERY',
-        help='Automation mode: describe the task in natural language to let AI plan and execute step by step'
+        help=t("help_auto_option")
     )
     
     parser.add_argument(
         '--config',
         metavar='PATH',
-        help='Specify config file path (default: ~/.aibash/config.yaml)'
+        help=t("help_config_option")
     )
 
     parser.add_argument(
         '-new', '--new-terminal',
         dest='new_terminal',
         action='store_true',
-        help='Execute generated commands in a new terminal window'
+        help=t("help_new_terminal")
     )
 
     parser.add_argument(
         '--auto-approve-all',
         dest='auto_approve_all',
         action='store_true',
-        help='Automation: automatically approve all actions without confirmation'
+        help=t("help_auto_approve_all")
     )
 
     parser.add_argument(
         '--auto-approve-commands',
         dest='auto_approve_commands',
         action='store_true',
-        help='Automation: automatically execute shell commands without confirmation'
+        help=t("help_auto_approve_commands")
     )
 
     parser.add_argument(
         '--auto-approve-files',
         dest='auto_approve_files',
         action='store_true',
-        help='Automation: automatically approve file reading actions'
+        help=t("help_auto_approve_files")
     )
 
     parser.add_argument(
         '--auto-approve-web',
         dest='auto_approve_web',
         action='store_true',
-        help='Automation: automatically approve outbound web requests'
+        help=t("help_auto_approve_web")
     )
 
     parser.add_argument(
         '--auto-max-steps',
         dest='auto_max_steps',
         type=int,
-        help='Automation: limit the maximum number of actions (default: 20)'
+        help=t("help_auto_max_steps")
+    )
+
+    parser.add_argument(
+        '-p', '--plan-file',
+        dest='plan_file',
+        metavar='PATH',
+        help=t("help_plan_file")
     )
     
     parser.add_argument(
         '--ui-language',
         dest='ui_language',
         choices=['en', 'zh'],
-        help='Select UI language for this session (default from config)'
+        help=t("help_ui_language")
     )
     
     parser.add_argument(
         '-v', '--version',
         action='version',
-        version='%(prog)s 0.1.0'
+        version='%(prog)s 0.1.0',
+        help=t("help_version")
     )
     
     parser.add_argument(
         '--init',
         action='store_true',
-        help='Interactive configuration initialization'
+        help=t("help_init")
     )
     
     parser.add_argument(
         '--history',
         action='store_true',
-        help='View command execution history'
+        help=t("help_history")
     )
     
     parser.add_argument(
         '--clear-history',
         action='store_true',
-        help='Clear command execution history'
+        help=t("help_clear_history")
     )
     
     parser.add_argument(
         '--test',
         action='store_true',
-        help='Test AI connection'
+        help=t("help_test")
     )
     
     return parser
@@ -483,7 +490,7 @@ def main():
         return
     
     # 如果没有提供查询，显示帮助
-    if not args.query and not args.auto_query:
+    if not args.query and not args.auto_query and not args.plan_file:
         parser.print_help()
         return
     
@@ -494,7 +501,22 @@ def main():
         sys.exit(1)
     
     try:
-        if args.auto_query:
+        if args.auto_query or args.plan_file:
+            auto_query_text = args.auto_query or ""
+            if args.plan_file:
+                file_path = Path(args.plan_file).expanduser()
+                if not file_path.exists():
+                    aibash.terminal.error(t("error_auto_file_not_found", path=file_path))
+                    sys.exit(1)
+                try:
+                    auto_query_text = file_path.read_text(encoding="utf-8").strip()
+                    aibash.terminal.info(t("info_auto_file_loaded", path=file_path))
+                except Exception as e:
+                    aibash.terminal.error(t("error_auto_file_read", path=file_path, error=e))
+                    sys.exit(1)
+            if not auto_query_text:
+                aibash.terminal.error(t("error_auto_missing_query"))
+                sys.exit(1)
             auto_options = {}
             if args.auto_approve_all:
                 auto_options['auto_confirm_all'] = True
@@ -507,7 +529,7 @@ def main():
             if args.auto_max_steps is not None:
                 auto_options['max_steps'] = args.auto_max_steps
             aibash.process_auto_task(
-                args.auto_query,
+                auto_query_text,
                 use_new_terminal=args.new_terminal,
                 auto_options=auto_options
             )

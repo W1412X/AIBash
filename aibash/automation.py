@@ -335,19 +335,21 @@ class AutomationExecutor:
             return True
         
         try:
-            response = requests.get(url, timeout=self.MAX_REQUEST_TIMEOUT)
-            content_type = response.headers.get("Content-Type", "")
-            text = response.text
-            preview = self._truncate(text, self.MAX_OBSERVATION_LENGTH)
-            status_line = f"HTTP {response.status_code} {response.reason}"
-            observation = f"{status_line}; Content-Type={content_type}; Preview:\n{preview}"
-            self._record_step("web_request", "success", reason, observation)
-            self.terminal.print_box(
-                title="Web Response Preview",
-                content=preview,
-                color=Colors.BRIGHT_GREEN
-            )
-            return True
+            return self._perform_web_request(url, reason, expectation, verify_ssl=True)
+        except requests.exceptions.SSLError as ssl_error:
+            self.terminal.error("✗ " + t("automation_ssl_error", error=ssl_error))
+            if not self._confirm_with_user(t("automation_ssl_prompt", url=url), action="web_request"):
+                observation = t("automation_ssl_denied")
+                self._record_step("web_request", "skipped", reason, observation)
+                self.terminal.warning(observation)
+                return True
+            try:
+                return self._perform_web_request(url, reason, expectation, verify_ssl=False)
+            except Exception as e:
+                observation = t("automation_web_error", error=e)
+                self._record_step("web_request", "failed", reason, observation)
+                self.terminal.error("✗ " + t("automation_web_error", error=e))
+                return True
         except Exception as e:
             observation = t("automation_web_error", error=e)
             self._record_step("web_request", "failed", reason, observation)
@@ -413,4 +415,25 @@ class AutomationExecutor:
         except (EOFError, KeyboardInterrupt):
             self.terminal.warning(t("common_operation_cancelled"))
             return False
+
+    def _perform_web_request(self, url: str, reason: str, expectation: str, verify_ssl: bool = True) -> bool:
+        """执行具体的网络请求逻辑"""
+        response = requests.get(url, timeout=self.MAX_REQUEST_TIMEOUT, verify=verify_ssl)
+        content_type = response.headers.get("Content-Type", "")
+        text = response.text
+        preview = self._truncate(text, self.MAX_OBSERVATION_LENGTH)
+        status_line = f"HTTP {response.status_code} {response.reason}"
+        note = ""
+        if not verify_ssl:
+            note = "\n" + t("automation_ssl_unverified_note")
+        observation = f"{status_line}; Content-Type={content_type}; Preview:\n{preview}{note}"
+        self._record_step("web_request", "success", reason, observation)
+        self.terminal.print_box(
+            title="Web Response Preview",
+            content=preview,
+            color=Colors.BRIGHT_GREEN
+        )
+        if note:
+            self.terminal.warning(t("automation_ssl_unverified_note"))
+        return True
 
