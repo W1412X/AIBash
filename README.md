@@ -16,6 +16,9 @@ AIBash 是一个智能命令行工具，能够根据自然语言描述生成对�
 - ⚙️ **灵活配置**: 支持多种配置选项（模型、密钥、系统信息等）
 - 🌐 **多平台支持**: 支持 macOS、Windows、Linux
 - 🔌 **多模型支持**: 支持 OpenAI API 和 Ollama 本地模型
+- 🧠 **自动化任务**: 通过 `-a` 自动规划多步命令，逐步执行完成复杂任务
+- 🪟 **新终端执行**: 通过 `-new` 在新的终端窗口中运行命令，保持当前窗口清爽
+- 🌏 **双语界面**: 命令行提示支持英文/中文两种语言，可随时切换
 
 ## 安装
 
@@ -84,6 +87,12 @@ aibash -l "列出当前目录下的所有文件"
 # 指定配置文件
 aibash --config /path/to/config.yaml -l "查找包含test的文件"
 
+# 自动模式示例（逐步完成任务并逐条确认）
+aibash -a "查看当前项目依赖并生成 requirements.txt"
+
+# 在新的终端窗口中执行命令
+aibash -new -l "运行当前目录下的测试用例"
+
 # 查看帮助
 aibash -h
 
@@ -103,7 +112,15 @@ aibash --test
 ## 命令行选项
 
 - `-l, --lang QUERY`: 自然语言描述，用于生成 shell 命令
+- `-a, --auto QUERY`: 自动模式，根据自然语言目标规划并执行多步操作，每一步执行前都会请求确认
+- `--auto-approve-all`: 自动模式下自动批准所有动作（无确认）
+- `--auto-approve-commands`: 自动模式下自动批准命令执行
+- `--auto-approve-files`: 自动模式下自动批准文件读取
+- `--auto-approve-web`: 自动模式下自动批准网络请求
+- `--auto-max-steps N`: 自动模式下限制最多执行的步骤数量（默认 20）
+- `--ui-language {en,zh}`: 临时切换界面语言（默认从配置读取，未设置时为英文）
 - `--config PATH`: 指定配置文件路径（默认: ~/.aibash/config.yaml）
+- `-new, --new-terminal`: 将命令在新的终端窗口中执行（未指定时默认在当前终端执行）
 - `--init`: 交互式初始化配置文件
 - `--history`: 查看命令执行历史
 - `--clear-history`: 清空命令执行历史
@@ -118,6 +135,22 @@ aibash --test
 - `[m]` 修改命令 - 修改命令后再执行
 - `[s]` 跳过/放弃 - 不执行命令
 - `[h]` 显示帮助 - 显示帮助信息
+
+当命令执行失败时，AIBash 会自动根据最新历史记录和错误输出请求 AI 生成新的命令建议，连同一条中文提示一起展示，帮助你快速迭代。
+
+### 自动模式（-a）
+
+自动模式会让 AIBash 充当一个“执行代理”，根据你的自然语言描述分步规划并完成任务：
+
+- 模型每次只会规划一个动作（运行命令、读取文件、访问网络、向你提问或结束）
+- 每个命令、文件读取或网络访问都会先询问你是否确认执行
+- 执行结果会反馈给模型，帮助其决定下一步操作
+- 适合需要多步协作的任务，如“拉取最新代码、安装依赖并运行测试”等
+- 可使用 `--auto-approve-*` 参数细粒度控制哪些操作无需确认，并可通过 `--auto-max-steps` 限制最多执行的步骤数
+- 如某一步执行失败，自动模式会向模型反馈错误详情，并自动重新规划新的命令或策略
+- 自动模式支持从配置文件预设是否自动确认命令/读文件/访问网络等行为
+
+可以与 `-new` 搭配，在新的终端窗口中执行实际命令，确保自动模式界面保持整洁。
 
 ## 配置说明
 
@@ -140,6 +173,24 @@ aibash --test
 - `system_info`: 系统信息（用于生成更准确的命令）
 - `custom_prompt`: 自定义 prompt 模板
 - `use_default_prompt`: 是否使用默认 prompt
+- `ui.language`: 界面语言（`en` 或 `zh`，默认 `en`）
+- `automation`: 自动模式默认行为配置
+
+```yaml
+automation:
+  auto_confirm_all: false
+  auto_confirm_commands: false
+  auto_confirm_files: false
+  auto_confirm_web: false
+  max_steps: 20
+
+ui:
+  enable_colors: true
+  single_key_mode: true
+  language: en
+```
+
+命令行中的 `--ui-language` 仅对当前会话生效，如需长期使用请在配置文件的 `ui.language` 中设置。
 
 ## 自定义 Prompt
 

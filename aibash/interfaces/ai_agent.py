@@ -19,6 +19,7 @@ class AIAgent(ABC):
         Args:
             prompt: 提示词
             **kwargs: 其他参数
+                expect_raw: bool - 当为 True 时返回模型原始输出（不做命令提取）
             
         Returns:
             生成的命令

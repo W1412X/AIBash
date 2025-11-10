@@ -31,10 +31,21 @@ class HistoryConfig:
 
 
 @dataclass
+class AutomationConfig:
+    """自动化模式配置"""
+    auto_confirm_all: bool = False
+    auto_confirm_commands: bool = False
+    auto_confirm_files: bool = False
+    auto_confirm_web: bool = False
+    max_steps: int = 20
+
+
+@dataclass
 class AppConfig:
     """应用配置"""
     model: ModelConfig = None
     history: HistoryConfig = None
+    automation: AutomationConfig = None
     system_info: str = ""
     custom_prompt: str = ""
     use_default_prompt: bool = True
@@ -46,6 +57,8 @@ class AppConfig:
             self.model = ModelConfig()
         if self.history is None:
             self.history = HistoryConfig()
+        if self.automation is None:
+            self.automation = AutomationConfig()
         if self.model_params is None:
             self.model_params = {}
         if self.ui is None:
@@ -97,6 +110,15 @@ class ConfigManager:
                 history_file=history_data.get('history_file', '')
             )
             
+            automation_data = data.get('automation', {})
+            automation_config = AutomationConfig(
+                auto_confirm_all=automation_data.get('auto_confirm_all', False),
+                auto_confirm_commands=automation_data.get('auto_confirm_commands', False),
+                auto_confirm_files=automation_data.get('auto_confirm_files', False),
+                auto_confirm_web=automation_data.get('auto_confirm_web', False),
+                max_steps=automation_data.get('max_steps', 20),
+            )
+            
             # 获取系统信息
             system_info = data.get('system_info', '')
             if not system_info:
@@ -105,6 +127,7 @@ class ConfigManager:
             return AppConfig(
                 model=model_config,
                 history=history_config,
+                automation=automation_config,
                 system_info=system_info,
                 custom_prompt=data.get('custom_prompt', ''),
                 use_default_prompt=data.get('use_default_prompt', True),
@@ -123,6 +146,24 @@ class ConfigManager:
         if not self.config.history.history_file:
             config_dir = self.config_path.parent
             self.config.history.history_file = str(config_dir / "history.json")
+        
+        # UI 默认参数
+        self.config.ui.setdefault('enable_colors', True)
+        self.config.ui.setdefault('single_key_mode', True)
+        self.config.ui.setdefault('language', 'en')
+        
+        # 自动化默认参数
+        if not isinstance(self.config.automation, AutomationConfig):
+            self.config.automation = AutomationConfig(
+                auto_confirm_all=self.config.automation.get('auto_confirm_all', False),
+                auto_confirm_commands=self.config.automation.get('auto_confirm_commands', False),
+                auto_confirm_files=self.config.automation.get('auto_confirm_files', False),
+                auto_confirm_web=self.config.automation.get('auto_confirm_web', False),
+                max_steps=self.config.automation.get('max_steps', 20),
+            )
+        else:
+            if self.config.automation.max_steps <= 0:
+                self.config.automation.max_steps = 20
     
     def _get_default_system_info(self) -> str:
         """获取默认系统信息"""
@@ -137,6 +178,7 @@ class ConfigManager:
             config_dict = {
                 'model': asdict(self.config.model),
                 'history': asdict(self.config.history),
+                'automation': asdict(self.config.automation),
                 'system_info': self.config.system_info,
                 'custom_prompt': self.config.custom_prompt,
                 'use_default_prompt': self.config.use_default_prompt,
@@ -169,11 +211,15 @@ class ConfigManager:
                     setattr(self.config.model, attr_name, value)
                 elif obj_name == 'history' and hasattr(self.config.history, attr_name):
                     setattr(self.config.history, attr_name, value)
+                elif obj_name == 'automation' and hasattr(self.config.automation, attr_name):
+                    setattr(self.config.automation, attr_name, value)
             elif hasattr(self.config, key):
                 setattr(self.config, key, value)
             elif hasattr(self.config.model, key):
                 setattr(self.config.model, key, value)
             elif hasattr(self.config.history, key):
                 setattr(self.config.history, key, value)
+            elif hasattr(self.config.automation, key):
+                setattr(self.config.automation, key, value)
         self._ensure_defaults()
 

@@ -56,6 +56,7 @@ class OllamaAgent(AIAgent):
         temperature = kwargs.get('temperature', self.temperature)
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         timeout = kwargs.get('timeout', self.timeout)
+        expect_raw = kwargs.get('expect_raw', False)
         
         try:
             data = {
@@ -77,6 +78,8 @@ class OllamaAgent(AIAgent):
                 result = response.json()
                 content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
                 if content:
+                    if expect_raw:
+                        return content.strip()
                     return self._extract_command(content)
         except Exception:
             pass  # 回退到传统 API
@@ -107,6 +110,9 @@ class OllamaAgent(AIAgent):
             
             if not content:
                 raise Exception("AI returned empty content")
+            
+            if expect_raw:
+                return content.strip()
             
             return self._extract_command(content)
             

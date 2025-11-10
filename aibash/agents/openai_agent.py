@@ -73,6 +73,8 @@ class OpenAIAgent(AIAgent):
             "max_tokens": max_tokens
         }
         
+        expect_raw = kwargs.get('expect_raw', False)
+        
         try:
             response = self.session.post(
                 url,
@@ -87,6 +89,9 @@ class OpenAIAgent(AIAgent):
             
             if not content:
                 raise Exception("AI returned empty content")
+            
+            if expect_raw:
+                return content.strip()
             
             return self._extract_command(content)
             

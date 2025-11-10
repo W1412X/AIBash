@@ -6,6 +6,7 @@ AIBash 主程序入口
 
 import sys
 import argparse
+from dataclasses import asdict
 from typing import Optional
 
 from .config import ConfigManager
@@ -13,8 +14,10 @@ from .agents.agent_builder import AgentBuilder
 from .history import HistoryManager
 from .interactive import InteractiveSelector
 from .prompt import PromptManager
-from .utils.terminal import TerminalOutput
+from .utils.terminal import TerminalOutput, Colors
 from . import config_init
+from .automation import AutomationExecutor
+from .i18n import I18n, t
 
 
 class AIBash:
@@ -29,6 +32,8 @@ class AIBash:
         """
         self.config_manager = ConfigManager(config_path)
         self.config = self.config_manager.get_config()
+        self.language = self.config.ui.get('language', 'en')
+        I18n.set_language(self.language)
         
         # 初始化历史记录管理器
         self.history_manager = HistoryManager(
@@ -49,11 +54,19 @@ class AIBash:
         self.agent = None
         self._init_agent()
     
+    def set_language(self, language: Optional[str]):
+        """切换界面语言"""
+        if not language:
+            return
+        I18n.set_language(language)
+        self.language = I18n.get_language()
+        self.config.ui['language'] = self.language
+    
     def _init_agent(self):
         """初始化 AI Agent"""
         model_config = self.config.model
         if not model_config.api_key and model_config.provider == "openai":
-            self.terminal.warning("Warning: API key not configured, please configure it first")
+            self.terminal.warning(t("warn_api_key_missing"))
             return
         
         try:
@@ -64,7 +77,7 @@ class AIBash:
                 timeout=self.config.model_params.get('timeout', 30)
             )
         except Exception as e:
-            self.terminal.error(f"Failed to initialize AI Agent: {e}")
+            self.terminal.error(t("error_agent_init_failed", error=e))
     
     def generate_command(self, user_query: str) -> Optional[str]:
         """
@@ -77,7 +90,7 @@ class AIBash:
             生成的命令，如果失败则返回 None
         """
         if not self.agent:
-            self.terminal.error("Error: AI Agent not initialized, please check configuration")
+            self.terminal.error(t("error_agent_not_initialized"))
             return None
         
         # 准备历史上下文
@@ -95,14 +108,14 @@ class AIBash:
         )
         
         try:
-            self.terminal.info("Generating command...")
+            self.terminal.info(t("info_generating_command"))
             command = self.agent.generate_command(prompt)
             return command
         except Exception as e:
-            self.terminal.error(f"Error: Failed to generate command - {e}")
+            self.terminal.error(t("error_generate_command", error=e))
             return None
     
-    def process_query(self, user_query: str):
+    def process_query(self, user_query: str, use_new_terminal: bool = False):
         """
         处理用户查询
         
@@ -123,7 +136,7 @@ class AIBash:
             
             choice = self.interactive.get_user_choice(single_key_mode=single_key_mode)
             if not choice:
-                self.terminal.warning("Invalid option, please try again")
+                self.terminal.warning(t("common_invalid_option"))
                 continue
             
             if choice == 'help':
@@ -131,7 +144,7 @@ class AIBash:
                 continue
             
             if choice == 'skip':
-                self.terminal.info("Command execution cancelled")
+                self.terminal.info(t("info_command_cancelled"))
                 return
             
             if choice == 'copy':
@@ -145,7 +158,10 @@ class AIBash:
                 continue
             
             if choice == 'execute':
-                success, output = self.interactive.execute_command(command)
+                success, output = self.interactive.execute_command(
+                    command,
+                    use_new_terminal=use_new_terminal
+                )
                 
                 # 保存历史记录
                 if self.config.history.enabled:
@@ -156,7 +172,119 @@ class AIBash:
                         user_query=user_query
                     )
                 
+                if success:
+                    return
+                
+                # 命令执行失败，尝试自动恢复
+                recovery = self._attempt_command_recovery(
+                    user_query=user_query,
+                    failed_command=command,
+                    error_output=output
+                )
+                
+                if recovery and recovery['command'] and recovery['command'] != command:
+                    command = recovery['command']
+                    tip = recovery.get('tip', '')
+                    content = t("label_command", command=command)
+                    if tip:
+                        content += f"\n{t('label_tip', tip=tip)}"
+                    self.terminal.print_box(
+                        title=t("title_recovery_suggestion"),
+                        content=content,
+                        color=Colors.BRIGHT_YELLOW
+                    )
+                    continue
+                
+                # 如果无法恢复或命令未变化，则结束
                 return
+
+    def process_auto_task(self, user_query: str, use_new_terminal: bool = False, auto_options: Optional[dict] = None):
+        """
+        处理自动化任务
+        
+        Args:
+            user_query: 用户查询/任务描述
+            use_new_terminal: 是否在新终端中执行命令
+        """
+        if not self.agent:
+            self.terminal.error(t("error_agent_not_initialized"))
+            return
+        
+        config_auto = asdict(self.config.automation)
+        merged_options = dict(config_auto)
+        auto_options = auto_options or {}
+        for key, value in auto_options.items():
+            if value is not None:
+                merged_options[key] = value
+        
+        executor = AutomationExecutor(
+            agent=self.agent,
+            terminal=self.terminal,
+            history_manager=self.history_manager,
+            interactive=self.interactive,
+            config=self.config,
+            use_new_terminal=use_new_terminal,
+            auto_options=merged_options
+        )
+        executor.run(user_query)
+
+    def _attempt_command_recovery(self, user_query: str, failed_command: str, error_output: str) -> Optional[dict]:
+        """
+        在命令执行失败后尝试生成新的命令建议
+        
+        Returns:
+            dict 包含 'command' 和可选 'tip' 字段，若失败返回 None
+        """
+        if not self.agent:
+            return None
+        
+        history_context = ""
+        if self.config.history.enabled and self.config.history.include_output:
+            recent_records = self.history_manager.get_recent_records(10)
+            history_context = PromptManager.format_history_context(recent_records)
+        
+        prompt = PromptManager.format_failure_prompt(
+            user_query=user_query,
+            failed_command=failed_command,
+            error_output=error_output or "",
+            system_info=self.config.system_info,
+            history_context=history_context
+        )
+        
+        try:
+            self.terminal.warning(t("warn_generating_recovery"))
+            response = self.agent.generate_command(prompt, expect_raw=True)
+            command, tip = self._parse_recovery_response(response)
+            if not command:
+                return None
+            return {'command': command, 'tip': tip}
+        except Exception as e:
+            self.terminal.error(t("error_recovery_failed", error=e))
+            return None
+
+    @staticmethod
+    def _parse_recovery_response(response: str) -> tuple:
+        """解析恢复命令响应"""
+        if not response:
+            return "", ""
+        
+        command = ""
+        tip = ""
+        for line in response.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("命令:"):
+                command = stripped.split("命令:", 1)[1].strip()
+            elif stripped.lower().startswith("command:"):
+                command = stripped.split(":", 1)[1].strip()
+            elif stripped.startswith("提示:"):
+                tip = stripped.split("提示:", 1)[1].strip()
+            elif stripped.lower().startswith("tip:"):
+                tip = stripped.split(":", 1)[1].strip()
+        
+        # 如果没有解析到命令，尝试将整段作为命令
+        if not command:
+            command = response.strip().splitlines()[0].strip()
+        return command, tip
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -175,17 +303,75 @@ For more information, visit: https://github.com/W1412X/aibash
         """
     )
     
-    parser.add_argument(
+    query_group = parser.add_mutually_exclusive_group()
+    
+    query_group.add_argument(
         '-l', '--lang',
         dest='query',
         metavar='QUERY',
-        help='Natural language description to generate shell command'
+        help='Natural language description to generate a single shell command'
+    )
+    
+    query_group.add_argument(
+        '-a', '--auto',
+        dest='auto_query',
+        metavar='QUERY',
+        help='Automation mode: describe the task in natural language to let AI plan and execute step by step'
     )
     
     parser.add_argument(
         '--config',
         metavar='PATH',
         help='Specify config file path (default: ~/.aibash/config.yaml)'
+    )
+
+    parser.add_argument(
+        '-new', '--new-terminal',
+        dest='new_terminal',
+        action='store_true',
+        help='Execute generated commands in a new terminal window'
+    )
+
+    parser.add_argument(
+        '--auto-approve-all',
+        dest='auto_approve_all',
+        action='store_true',
+        help='Automation: automatically approve all actions without confirmation'
+    )
+
+    parser.add_argument(
+        '--auto-approve-commands',
+        dest='auto_approve_commands',
+        action='store_true',
+        help='Automation: automatically execute shell commands without confirmation'
+    )
+
+    parser.add_argument(
+        '--auto-approve-files',
+        dest='auto_approve_files',
+        action='store_true',
+        help='Automation: automatically approve file reading actions'
+    )
+
+    parser.add_argument(
+        '--auto-approve-web',
+        dest='auto_approve_web',
+        action='store_true',
+        help='Automation: automatically approve outbound web requests'
+    )
+
+    parser.add_argument(
+        '--auto-max-steps',
+        dest='auto_max_steps',
+        type=int,
+        help='Automation: limit the maximum number of actions (default: 20)'
+    )
+    
+    parser.add_argument(
+        '--ui-language',
+        dest='ui_language',
+        choices=['en', 'zh'],
+        help='Select UI language for this session (default from config)'
     )
     
     parser.add_argument(
@@ -235,16 +421,20 @@ def main():
     try:
         aibash = AIBash(config_path=args.config)
     except Exception as e:
-        print(f"Error: Initialization failed - {e}", file=sys.stderr)
+        print(t("error_initialization_failed", error=e), file=sys.stderr)
         sys.exit(1)
+    
+    if args.ui_language:
+        aibash.set_language(args.ui_language)
+        print(t("info_new_language", language=args.ui_language))
     
     # 查看历史记录
     if args.history:
         history_records = aibash.history_manager.load_records()
         if not history_records:
-            print("No history records")
+            print(t("history_none"))
         else:
-            print(f"\nTotal {len(history_records)} history records:\n")
+            print(f"\n{t('history_total', count=len(history_records))}\n")
             print("=" * 80)
             for i, record in enumerate(history_records[-20:], 1):  # 显示最近20条
                 timestamp = record.get('timestamp', '')
@@ -255,63 +445,85 @@ def main():
                 
                 print(f"\n[{i}] {timestamp}")
                 if user_query:
-                    print(f"  Query: {user_query}")
-                print(f"  Command: {command}")
-                print(f"  Status: {'✓ Success' if success else '✗ Failed'}")
+                    print(t("history_query", query=user_query))
+                print(t("history_command", command=command))
+                status_text = t("history_status_success") if success else t("history_status_failed")
+                print(t("history_status", status=status_text))
                 if output:
                     output_preview = output[:100] + "..." if len(output) > 100 else output
-                    print(f"  Output: {output_preview}")
+                    print(t("history_output", output=output_preview))
                 print("-" * 80)
         return
     
     # 清空历史记录
     if args.clear_history:
-        confirm = input("Are you sure you want to clear all history records? (y/N): ").strip().lower()
+        confirm = input(t("history_clear_confirm")).strip().lower()
         if confirm == 'y':
             aibash.history_manager.clear_history()
-            print("✓ History records cleared")
+            print(t("history_cleared"))
         else:
-            print("Operation cancelled")
+            print(t("common_operation_cancelled"))
         return
     
     # 测试连接
     if args.test:
         if not aibash.agent:
-            aibash.terminal.error("Error: AI Agent not initialized")
-            aibash.terminal.info("Please run 'aibash --init' to configure first")
+            aibash.terminal.error(t("error_agent_not_initialized"))
+            aibash.terminal.info(t("info_run_init_first"))
             sys.exit(1)
         
-        aibash.terminal.info("Testing AI connection...")
+        aibash.terminal.info(t("info_testing_connection"))
         if aibash.agent.test_connection():
-            aibash.terminal.success("✓ Connection successful")
+            aibash.terminal.success(t("info_connection_success"))
             model_info = aibash.agent.get_model_info()
-            aibash.terminal.info(f"Model: {model_info.get('model', 'N/A')}")
-            aibash.terminal.info(f"Provider: {model_info.get('provider', 'N/A')}")
+            aibash.terminal.info(t("info_connection_model", model=model_info.get('model', 'N/A')))
+            aibash.terminal.info(t("info_connection_provider", provider=model_info.get('provider', 'N/A')))
         else:
-            aibash.terminal.error("✗ Connection failed, please check configuration and network connection")
+            aibash.terminal.error(t("error_connection_failed"))
         return
     
     # 如果没有提供查询，显示帮助
-    if not args.query:
+    if not args.query and not args.auto_query:
         parser.print_help()
         return
     
     # 检查 AI Agent 是否初始化
     if not aibash.agent:
-        aibash.terminal.error("\nError: AI Agent not initialized")
-        aibash.terminal.info("Please run 'aibash --init' to configure, or check configuration file")
+        aibash.terminal.error("\n" + t("error_agent_not_initialized"))
+        aibash.terminal.info(t("info_run_init_or_check"))
         sys.exit(1)
     
     try:
-        aibash.process_query(args.query)
+        if args.auto_query:
+            auto_options = {}
+            if args.auto_approve_all:
+                auto_options['auto_confirm_all'] = True
+            if args.auto_approve_commands:
+                auto_options['auto_confirm_commands'] = True
+            if args.auto_approve_files:
+                auto_options['auto_confirm_files'] = True
+            if args.auto_approve_web:
+                auto_options['auto_confirm_web'] = True
+            if args.auto_max_steps is not None:
+                auto_options['max_steps'] = args.auto_max_steps
+            aibash.process_auto_task(
+                args.auto_query,
+                use_new_terminal=args.new_terminal,
+                auto_options=auto_options
+            )
+        else:
+            aibash.process_query(
+                args.query,
+                use_new_terminal=args.new_terminal
+            )
     except KeyboardInterrupt:
-        print("\n\nOperation cancelled")
+        print("\n\n" + t("common_operation_cancelled"))
         sys.exit(0)
     except FileNotFoundError as e:
-        print(f"Error: File not found - {e}", file=sys.stderr)
+        print(t("error_file_not_found", error=e), file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(t("error_generic", error=e), file=sys.stderr)
         import traceback
         if '--debug' in sys.argv:
             traceback.print_exc()

@@ -40,6 +40,50 @@ class PromptManager:
 
 请直接输出shell命令，不要包含任何其他内容："""
     
+    FAILURE_RECOVERY_PROMPT_ZH = """你是一名命令行专家，正在帮助用户修复失败的命令。
+
+当前系统信息：
+{system_info}
+
+原始需求：
+{user_query}
+
+失败的命令：
+{failed_command}
+
+错误输出（如有截断请依然充分参考）：
+{error_output}
+
+历史上下文（最近执行情况）：
+{history_context}
+
+请分析失败原因，生成一个新的、可直接执行且更可靠的命令，并附上一句简洁的中文提示建议，输出格式为：
+命令: <新命令>
+提示: <一句话提示>
+"""
+    
+    FAILURE_RECOVERY_PROMPT_EN = """You are a command-line expert helping the user fix a failed command.
+
+System information:
+{system_info}
+
+Original request:
+{user_query}
+
+Failed command:
+{failed_command}
+
+Error output (use the portion provided even if truncated):
+{error_output}
+
+Recent execution history (if any):
+{history_context}
+
+Please analyse the failure, generate a safer replacement command, and output in the format:
+Command: <new command>
+Tip: <one-sentence hint>
+"""
+    
     @staticmethod
     def format_prompt(
         user_query: str,
@@ -68,6 +112,33 @@ class PromptManager:
             system_info=system_info or "未知系统",
             history_context=history_context or "",
             user_query=user_query
+        )
+    
+    @staticmethod
+    def format_failure_prompt(
+        user_query: str,
+        failed_command: str,
+        error_output: str,
+        system_info: str = "",
+        history_context: str = ""
+    ) -> str:
+        """格式化命令失败后用于恢复的 prompt"""
+        from .i18n import I18n
+        language = I18n.get_language()
+        template = (
+            PromptManager.FAILURE_RECOVERY_PROMPT_ZH
+            if language == "zh"
+            else PromptManager.FAILURE_RECOVERY_PROMPT_EN
+        )
+        default_system = "未知系统" if language == "zh" else "Unknown system"
+        default_error_output = "（无错误输出）" if language == "zh" else "(no error output)"
+        default_history = "（无历史记录）" if language == "zh" else "(no history yet)"
+        return template.format(
+            system_info=system_info or default_system,
+            user_query=user_query,
+            failed_command=failed_command,
+            error_output=error_output or default_error_output,
+            history_context=history_context or default_history
         )
     
     @staticmethod
