@@ -717,7 +717,7 @@ def main():
         return
     
     # 如果没有提供查询，显示帮助
-    if not args.query and not args.auto_query and not args.plan_file and not args.analyze_query:
+    if not args.query and not args.auto_query and not args.analyze_query:
         parser.print_help()
         return
     
@@ -726,6 +726,25 @@ def main():
         aibash.terminal.error("\n" + t("error_agent_not_initialized"))
         aibash.terminal.info(t("info_run_init_or_check"))
         sys.exit(1)
+    
+    plan_query_text: Optional[str] = None
+    if args.plan_file:
+        if not args.auto_query and not args.analyze_query:
+            aibash.terminal.error(t("error_plan_requires_auto_mode"))
+            sys.exit(1)
+        file_path = Path(args.plan_file).expanduser()
+        if not file_path.exists():
+            aibash.terminal.error(t("error_auto_file_not_found", path=file_path))
+            sys.exit(1)
+        try:
+            plan_query_text = file_path.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            aibash.terminal.error(t("error_auto_file_read", path=file_path, error=e))
+            sys.exit(1)
+        if not plan_query_text:
+            aibash.terminal.error(t("error_plan_file_empty", path=file_path))
+            sys.exit(1)
+        aibash.terminal.info(t("info_auto_file_loaded", path=file_path))
     
     def collect_auto_options():
         auto_options = {}
@@ -743,28 +762,21 @@ def main():
     
     try:
         if args.analyze_query:
+            analyze_query_text = plan_query_text if plan_query_text is not None else args.analyze_query
+            if not analyze_query_text:
+                aibash.terminal.error(t("error_analyze_missing_query"))
+                sys.exit(1)
             auto_options = collect_auto_options()
             auto_options.setdefault('summary_workers', aibash.summary_workers)
             aibash.run_project_analysis(
-                args.analyze_query,
+                analyze_query_text,
                 use_new_terminal=args.new_terminal,
                 auto_options=auto_options
             )
             return
         
-        if args.auto_query or args.plan_file:
-            auto_query_text = args.auto_query or ""
-            if args.plan_file:
-                file_path = Path(args.plan_file).expanduser()
-                if not file_path.exists():
-                    aibash.terminal.error(t("error_auto_file_not_found", path=file_path))
-                    sys.exit(1)
-                try:
-                    auto_query_text = file_path.read_text(encoding="utf-8").strip()
-                    aibash.terminal.info(t("info_auto_file_loaded", path=file_path))
-                except Exception as e:
-                    aibash.terminal.error(t("error_auto_file_read", path=file_path, error=e))
-                    sys.exit(1)
+        if args.auto_query or plan_query_text is not None:
+            auto_query_text = plan_query_text if plan_query_text is not None else (args.auto_query or "")
             if not auto_query_text:
                 aibash.terminal.error(t("error_auto_missing_query"))
                 sys.exit(1)

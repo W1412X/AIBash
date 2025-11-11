@@ -90,8 +90,9 @@ aibash --config /path/to/config.yaml -l "查找包含test的文件"
 # 自动模式示例（逐步完成任务并逐条确认）
 aibash -a "查看当前项目依赖并生成 requirements.txt"
 
-# 自动模式从文件读取任务描述
-aibash -p /path/to/task_description.txt
+# 自动/分析模式从文件读取任务描述（需与 -a 或 --analyze 搭配）
+aibash -a "" -p /path/to/task_description.txt
+aibash --analyze "进行代码审查" -p /path/to/task_description.txt
 
 # 在新的终端窗口中执行命令
 aibash -new -l "运行当前目录下的测试用例"
@@ -118,7 +119,7 @@ aibash --test
 - `-l, --lang QUERY`: 自然语言描述，用于生成 shell 命令
 - `-a, --auto QUERY`: 自动模式，根据自然语言目标规划并执行多步操作（默认最多 30 步，不生成项目摘要）
 - `--analyze QUERY`: 项目分析模式，在执行步骤前自动生成项目摘要，适合大型工程
-- `-p, --plan-file PATH`: 指定文件作为自动模式的任务描述输入
+- `-p, --plan-file PATH`: 指定文件作为任务描述输入，需与 `-a/--auto` 或 `-A/--analyze` 搭配使用
 - `--auto-approve-all`: 自动模式下自动批准所有动作（无确认）
 - `--auto-approve-commands`: 自动模式下自动批准命令执行
 - `--auto-approve-files`: 自动模式下自动批准文件读取
@@ -229,15 +230,18 @@ use_default_prompt: false
 aibash/
 ├── aibash/
 │   ├── __init__.py
-│   ├── config.py          # 配置管理
-│   ├── ai_client.py       # AI 模型客户端
+│   ├── main.py            # 主程序入口
+│   ├── automation.py      # 自动模式执行器
+│   ├── agents/            # 不同模型的 Agent 实现
+│   ├── config.py          # 配置加载与校验
 │   ├── history.py         # 历史记录管理
-│   ├── interactive.py     # 交互式选择
-│   ├── prompt.py          # Prompt 管理
-│   └── main.py            # 主程序入口
-├── setup.py
+│   ├── interactive.py     # 交互式命令选择
+│   ├── prompt.py          # Prompt 模板与工具
+│   └── utils/             # 终端、剪贴板等工具方法
+├── pyproject.toml
 ├── requirements.txt
-└── README.md
+├── README.md
+└── CONFIG_EXAMPLES.md
 ```
 
 ## 开发
@@ -251,7 +255,8 @@ python -m aibash.main -l "测试命令"
 ### 构建分发包
 
 ```bash
-python setup.py sdist bdist_wheel
+pip install build
+python -m build
 ```
 
 ## 文档
